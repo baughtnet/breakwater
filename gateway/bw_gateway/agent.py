@@ -215,15 +215,16 @@ class Agent:
         out = sh("ip", "-6", "route", "show", "default", "dev", self.net.lan_if, check=False).stdout
         return bool(out.strip())
 
-    def read_neigh(self) -> list[list[str]]:
+    def read_neigh(self) -> list[list[Any]]:
+        """[ip, mac, reachable] for every LAN neighbour. `reachable` means the kernel heard from it just now."""
         out = sh("ip", "-4", "neigh", "show", "dev", self.net.lan_if, check=False).stdout
-        pairs = []
+        rows: list[list[Any]] = []
         for line in out.splitlines():
             parts = line.split()
             if "lladdr" in parts and parts[-1] not in ("FAILED", "INCOMPLETE"):
-                pairs.append([parts[0], parts[parts.index("lladdr") + 1].lower()])
-        self.neigh = {ip: mac for ip, mac in pairs}
-        return pairs
+                rows.append([parts[0], parts[parts.index("lladdr") + 1].lower(), parts[-1] in ("REACHABLE", "DELAY", "PROBE")])
+        self.neigh = {ip: mac for ip, mac, _ in rows}
+        return rows
 
     def read_counters(self) -> list[list[Any]]:
         """Per-device byte deltas since the last sample: [mac, minute, up, down]."""

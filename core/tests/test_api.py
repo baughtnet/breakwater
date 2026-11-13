@@ -133,6 +133,18 @@ def test_standby_replicates_config_and_facts_and_refuses_edits(tmp_path, node):
     assert {n["node_id"] for n in pclient.get("/api/system").json()["nodes"]} == {"n1", "n2"}
 
 
+def test_devices_are_discovered_without_dhcp_and_shown_online(node):
+    eng, client = node
+    eng.report({"neigh": [["192.168.0.1", "aa:aa:aa:00:00:01", True],     # the router itself: ignored
+                          ["192.168.0.44", "AA:BB:CC:00:00:44", True],    # a device with a static address
+                          ["192.168.0.45", "aa:bb:cc:00:00:45", False]]}) # a stale ARP entry: not proof of presence
+    devices = {d["mac"]: d for d in client.get("/api/devices").json()}
+    assert set(devices) == {"aa:bb:cc:00:00:44"}
+    assert devices["aa:bb:cc:00:00:44"]["online"] and devices["aa:bb:cc:00:00:44"]["ip"] == "192.168.0.44"
+    eng.report({"neigh": [["192.168.0.44", "aa:bb:cc:00:00:44", True]]})  # seen again: no duplicate
+    assert len(client.get("/api/devices").json()) == 1
+
+
 def test_demo_seed_produces_a_full_dashboard(tmp_path):
     from breakwater import seed
     cfg = Config(node_id="demo", token="t", data_dir=tmp_path, adguard_enabled=False)

@@ -154,14 +154,16 @@ def seed_history(eng: Engine, days: int = 28, seed: int = 7) -> None:
                             host = rng.choice(SITES[cat])
                             site, category = eng.cat.classify(host)
                             stick = rng.randint(2, 9)
-                            if inspect and rng.random() < 0.6:
+                        if inspect:
+                            # what an inspected device adds: pages, videos and searches
+                            if rng.random() < 0.45:
                                 web.append({"t": t + rng.randint(5, 200), "mac": mac, "k": "visit", "host": host,
                                             "url": f"https://{host}/", "title": eng.cat.label(site)})
-                            if inspect and host == "www.youtube.com":
+                            if host == "www.youtube.com" and rng.random() < 0.6:
                                 vid = rng.choice(VIDEOS)
                                 web.append({"t": t + rng.randint(20, 250), "mac": mac, "k": "video", "host": host,
                                             "vid": vid[0], "title": vid[1], "channel": vid[2], "dur": vid[3]})
-                            if inspect and host == "www.google.com" or (inspect and rng.random() < 0.08):
+                            if rng.random() < (0.5 if host == "www.google.com" else 0.07):
                                 web.append({"t": t + rng.randint(5, 250), "mac": mac, "k": "search",
                                             "host": "www.google.com", "engine": "Google",
                                             "q": rng.choice(SEARCHES[fam["name"]])})
@@ -215,9 +217,10 @@ def _ticker(eng: Engine) -> None:
         eng.facts.append("dns", {"rows": rows})
         eng.facts.append("usage", {"rows": usage})
         eng.facts.recompute_dirty()
-        eng.gateway_status = {"vip_held": True, "dhcp": True, "proxy": True, "ts": time.time()}
         eng.invalidate()
-        time.sleep(60)
+        for _ in range(12):  # keep the pretend gateway's heartbeat fresh between ticks
+            eng.gateway_status = {"vip_held": True, "dhcp": True, "proxy": True, "ts": time.time()}
+            time.sleep(5)
 
 
 def run(eng: Engine) -> None:

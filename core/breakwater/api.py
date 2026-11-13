@@ -104,7 +104,8 @@ def create_app(cfg: Config, eng: Engine, web_dir: Path | None = None) -> FastAPI
     def get_session(request: Request):
         user = session_user(request)
         return {"authenticated": bool(user), "username": user, "role": cfg.role, "node_id": cfg.node_id,
-                "setup_needed": db.val("SELECT COUNT(*) FROM users", (), 0) == 0, "tz": cfg.tz_name}
+                "setup_needed": db.val("SELECT COUNT(*) FROM users", (), 0) == 0, "tz": cfg.tz_name,
+                "utc_offset": int(eng.now().utcoffset().total_seconds())}
 
     def _check_password(pw: str) -> None:
         if len(pw) < 10:
@@ -383,6 +384,10 @@ def create_app(cfg: Config, eng: Engine, web_dir: Path | None = None) -> FastAPI
     def list_alerts(unacked: bool = False, profile_id: int | None = None, limit: int = 200, _: str = Depends(parent)):
         macs = _macs(profile_id) if profile_id is not None else None
         return queries.alerts(eng, min(limit, 500), macs, unacked)
+
+    @app.get("/api/alerts/count")
+    def count_alerts(_: str = Depends(parent)):
+        return {"unacked": db.val("SELECT COUNT(*) FROM alerts WHERE acked=0", (), 0)}
 
     @app.post("/api/alerts/ack")
     def ack_alert(body: dict[str, Any], _: str = Depends(parent)):

@@ -154,13 +154,37 @@ class Engine:
         if payload.get("neigh"):
             now = time.time()
             with self.db.tx() as c:
-                c.executemany("INSERT INTO neigh(ip,mac,ts) VALUES(?,?,?) ON CONFLICT(ip) DO UPDATE SET "
-                              "mac=excluded.mac, ts=excluded.ts", [(ip, mac.lower(), now) for ip, mac in payload["neigh"]])
+                for row in payload["neigh"]:
+                    ip, mac = row[0], row[1].lower()
+                    c.execute("INSERT INTO neigh(ip,mac,ts) VALUES(?,?,?) ON CONFLICT(ip) DO UPDATE SET "
+                              "mac=excluded.mac, ts=excluded.ts", (ip, mac, now))
+                    if len(row) > 2 and row[2]:  # on the LAN right now: counts as online even if unmonitored
+                        c.execute("INSERT INTO seen(mac,ts) VALUES(?,?) ON CONFLICT(mac) DO UPDATE SET "
+                                  "ts=MAX(ts,excluded.ts)", (mac, now))
+            self._discover(payload["neigh"])
         for f in payload.get("facts") or []:
             if f["kind"] in ("usage", "lease", "web"):
                 self.facts.append(f["kind"], f["data"], f.get("ts"))
         if payload.get("facts"):
             self.invalidate()
+
+    def _infrastructure_ips(self) -> set[str]:
+        ips = {self.cfg.router_ip, self.cfg.node_ip, self.cfg.vip}
+        for peer in self.cfg.peers:
+            ips.add(peer.split("//")[-1].split(":")[0].split("/")[0])
+        return {ip for ip in ips if ip}
+
+    def _discover(self, neigh: list[list[Any]]) -> None:
+        """Devices that never asked us for an address (static IPs, or the router still doing DHCP) are
+        found by being seen on the LAN, and recorded the same way a lease would be."""
+        skip = self._infrastructure_ips()
+        known = {r["mac"] for r in self.db.q("SELECT mac FROM leases UNION SELECT mac FROM devices")}
+        for row in neigh:
+            ip, mac = row[0], row[1].lower()
+            if ip in skip or mac in known or not (len(row) > 2 and row[2]):
+                continue
+            known.add(mac)
+            self.facts.append("lease", {"mac": mac, "ip": ip, "hostname": "", "expires": 0, "event": "seen"})
 
     # --------------------------------------------------------------- actions
     def act(self, data: dict[str, Any]) -> None:
@@ -318,8 +342,9 @@ class Engine:
             "dhcp": bool(gw_ok and gw.get("dhcp")), "proxy": bool(gw_ok and gw.get("proxy")),
             "ipv6_leak": bool(gw.get("ipv6_leak")) if gw_ok else False,
             "ip": self.cfg.node_ip,
-            "dns": {t: {"ok": not i.last_error and (i.last_ok > 0), "error": i.last_error}
-                    for t, i in self.instances.items()},
+            "dns": ({t: {"ok": not i.last_error and (i.last_ok > 0), "error": i.last_error}
+                     for t, i in self.instances.items()}
+                    or ({"strict": {"ok": True, "error": ""}, "basic": {"ok": True, "error": ""}} if self.cfg.demo else {})),
         }
 
     def _loop_cluster(self) -> None:

@@ -1,0 +1,7 @@
+bcrypt==5.0.0
+fastapi==0.162.5
+httpx==0.28.1
+PyYAML==6.0.3
+tldextract==5.4.0
+tzdata==2026.6
+uvicorn==0.54.0

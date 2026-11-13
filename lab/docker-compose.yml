@@ -1,0 +1,163 @@
+# A simulated house, entirely inside Docker. Nothing here touches the real LAN.
+#
+#   router (10.77.0.1)  — stands in for the consumer router
+#   node1  (10.77.0.2)  — Breakwater primary        node2 (10.77.0.3) — Breakwater standby
+#   virtual IP 10.77.0.5 floats between the nodes
+#   kid-pc, kid-console, adult, guest — devices that join by DHCP like real ones
+#
+# Each "node" is four containers sharing one network namespace, which is what host networking
+# gives you on a real machine.
+name: bwlab
+
+x-env: &env
+  BW_CLUSTER_TOKEN: lab-cluster-token-0123456789
+  BW_ADGUARD_PASSWORD: lab-adguard-password-01
+  BW_LAN_CIDR: 10.77.0.0/24
+  BW_ROUTER_IP: 10.77.0.1
+  BW_VIP: 10.77.0.5
+  BW_DHCP_START: 10.77.0.100
+  BW_DHCP_END: 10.77.0.199
+  BW_DHCP_LEASE: 2m
+  BW_TZ: America/Vancouver
+  BW_LAB_ROUTE: "1"
+
+x-gateway: &gateway
+  build: ../gateway
+  cap_add: [NET_ADMIN, NET_RAW, NET_BROADCAST]
+  sysctls:
+    net.ipv4.ip_forward: 1
+    net.ipv4.conf.all.send_redirects: 0
+    net.ipv4.conf.default.send_redirects: 0
+    net.ipv4.conf.all.rp_filter: 2
+  stop_grace_period: 3s
+
+x-core: &core
+  build: {context: .., dockerfile: core/Dockerfile}
+  stop_grace_period: 3s
+
+x-adguard: &adguard
+  image: adguard/adguardhome:v0.107.80
+  stop_grace_period: 3s
+
+x-device: &device
+  build: client
+  cap_add: [NET_ADMIN]
+  stop_grace_period: 1s
+
+services:
+  router:
+    build: client
+    command: /router.sh
+    cap_add: [NET_ADMIN]
+    sysctls: {net.ipv4.ip_forward: 1}
+    environment:
+      ROUTER_IP: 10.77.0.1
+      BLOCKED_MACS: "02:42:0a:4d:10:01, 02:42:0a:4d:10:02"
+    networks: {lan: {ipv4_address: 10.77.0.1}, wan: {}}
+    stop_grace_period: 1s
+
+  # ------------------------------------------------------------------ node 1
+  node1:
+    <<: *gateway
+    hostname: node1
+    environment: {<<: *env, BW_NODE_IP: 10.77.0.2, BW_ROLE: primary, BW_PEER_IPS: 10.77.0.3, BW_VRRP_PRIORITY: 150}
+    networks: {lan: {ipv4_address: 10.77.0.2}, mgmt: {}}
+    ports: ["127.0.0.1:8081:8080"]
+    volumes: [ca:/ca, gw1:/data, ../gateway/bw_gateway:/app/bw_gateway:ro]
+    depends_on: [router]
+  init1:
+    <<: *core
+    user: root
+    environment: *env
+    command: python -m breakwater.bootstrap /adguard/strict /adguard/basic
+    volumes: [ag-strict-1:/adguard/strict, ag-basic-1:/adguard/basic, ../core/breakwater:/app/breakwater:ro]
+  adguard-strict-1:
+    <<: *adguard
+    network_mode: service:node1
+    volumes: [ag-strict-1:/opt/adguardhome/conf, ag-strict-1-work:/opt/adguardhome/work]
+    depends_on: {init1: {condition: service_completed_successfully}}
+  adguard-basic-1:
+    <<: *adguard
+    network_mode: service:node1
+    volumes: [ag-basic-1:/opt/adguardhome/conf, ag-basic-1-work:/opt/adguardhome/work]
+    depends_on: {init1: {condition: service_completed_successfully}}
+  core1:
+    <<: *core
+    network_mode: service:node1
+    environment: {<<: *env, BW_NODE_ID: node1, BW_NODE_IP: 10.77.0.2, BW_ROLE: primary, BW_PEERS: "http://10.77.0.3:8080"}
+    volumes: [core1:/data, ca:/ca:ro, ../core/breakwater:/app/breakwater:ro]
+
+  # ------------------------------------------------------------------ node 2
+  node2:
+    <<: *gateway
+    hostname: node2
+    environment: {<<: *env, BW_NODE_IP: 10.77.0.3, BW_ROLE: standby, BW_PEER_IPS: 10.77.0.2, BW_VRRP_PRIORITY: 100}
+    networks: {lan: {ipv4_address: 10.77.0.3}, mgmt: {}}
+    ports: ["127.0.0.1:8082:8080"]
+    volumes: [ca:/ca, gw2:/data, ../gateway/bw_gateway:/app/bw_gateway:ro]
+    depends_on: [router]
+  init2:
+    <<: *core
+    user: root
+    environment: *env
+    command: python -m breakwater.bootstrap /adguard/strict /adguard/basic
+    volumes: [ag-strict-2:/adguard/strict, ag-basic-2:/adguard/basic, ../core/breakwater:/app/breakwater:ro]
+  adguard-strict-2:
+    <<: *adguard
+    network_mode: service:node2
+    volumes: [ag-strict-2:/opt/adguardhome/conf, ag-strict-2-work:/opt/adguardhome/work]
+    depends_on: {init2: {condition: service_completed_successfully}}
+  adguard-basic-2:
+    <<: *adguard
+    network_mode: service:node2
+    volumes: [ag-basic-2:/opt/adguardhome/conf, ag-basic-2-work:/opt/adguardhome/work]
+    depends_on: {init2: {condition: service_completed_successfully}}
+  core2:
+    <<: *core
+    network_mode: service:node2
+    environment: {<<: *env, BW_NODE_ID: node2, BW_NODE_IP: 10.77.0.3, BW_ROLE: standby, BW_PEERS: "http://10.77.0.2:8080",
+                  BW_PRIMARY_URL: "http://10.77.0.2:8080"}
+    volumes: [core2:/data, ca:/ca:ro, ../core/breakwater:/app/breakwater:ro]
+
+  # ----------------------------------------------------------------- devices
+  kid-pc:
+    <<: *device
+    hostname: kid-pc
+    networks: {lan: {mac_address: "02:42:0a:4d:10:01"}}
+  kid-console:
+    <<: *device
+    hostname: kid-console
+    networks: {lan: {mac_address: "02:42:0a:4d:10:02"}}
+  adult:
+    <<: *device
+    hostname: adult-phone
+    networks: {lan: {mac_address: "02:42:0a:4d:20:01"}}
+  guest:
+    <<: *device
+    hostname: guest-phone
+    networks: {lan: {mac_address: "02:42:0a:4d:30:01"}}
+
+networks:
+  lan:
+    # Not "internal": Docker drops anything leaving an internal bridge, including traffic our own
+    # router container should forward. Docker's own NAT is switched off so the only working way out
+    # is that router container, as in a real house.
+    driver_opts: {com.docker.network.bridge.enable_ip_masquerade: "false"}
+    ipam: {config: [{subnet: 10.77.0.0/24, gateway: 10.77.0.254, ip_range: 10.77.0.224/28}]}
+  wan: {}
+  mgmt: {}
+
+volumes:
+  ca: {}
+  gw1: {}
+  gw2: {}
+  core1: {}
+  core2: {}
+  ag-strict-1: {}
+  ag-strict-1-work: {}
+  ag-basic-1: {}
+  ag-basic-1-work: {}
+  ag-strict-2: {}
+  ag-strict-2-work: {}
+  ag-basic-2: {}
+  ag-basic-2-work: {}

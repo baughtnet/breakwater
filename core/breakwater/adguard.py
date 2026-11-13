@@ -20,9 +20,8 @@ _HAGEZI = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/"
 # (id, name, url, reason label used in the dashboard)
 STRICT_LISTS = [
     (101, "Adult content (HaGeZi NSFW)", _HAGEZI + "nsfw.txt", "adult"),
-    (102, "Adult content (OISD NSFW)", "https://nsfw.oisd.nl", "adult"),
     (103, "VPN, proxy and DNS bypass (HaGeZi)", _HAGEZI + "doh-vpn-proxy-bypass.txt", "bypass"),
-    (104, "Gambling (HaGeZi)", _HAGEZI + "gambling.txt", "gambling"),
+    (104, "Gambling (HaGeZi)", _HAGEZI + "gambling.medium.txt", "gambling"),
     (105, "Malware and phishing (HaGeZi TIF)", _HAGEZI + "tif.medium.txt", "malware"),
     (106, "Ads and trackers (HaGeZi Pro)", _HAGEZI + "pro.txt", "ads"),
 ]

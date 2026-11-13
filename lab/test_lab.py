@@ -198,7 +198,8 @@ def test_inspected_device_is_decrypted_and_logged(house, api):
         s = [x for x in searches if marker in x.get("q", "")]
         return (v, s) if v and len(s) >= 2 else None
     visits, searches = wait_for(logged, 20, what="visit and searches to reach the dashboard")
-    assert visits[0]["title"] == "Example Domain" and visits[0]["host"] == "example.com"
+    page = next(v for v in visits if v["host"] == "example.com")
+    assert page["title"] == "Example Domain" and marker in page["url"]
     assert {s["engine"] for s in searches} == {"Google", "DuckDuckGo"}
     alerts = wait_for(lambda: [a for a in api.get("/api/alerts").json() if marker in a["detail"]], 10, what="alert")
     assert alerts[0]["kind"] == "search_bypass" and alerts[0]["profile"] == "Kid"
@@ -218,7 +219,7 @@ def test_uninspected_device_keeps_real_certificates(house):
 
 def test_pinned_app_falls_back_to_passthrough(house, api):
     """A client that rejects our certificate fails once, then is let through untouched."""
-    pinned = "--cacert /tmp/orig-bundle.crt"
+    pinned = "--cacert /tmp/orig-bundle.crt --capath /nonexistent"  # trust store without our CA
     assert fetch_code("kid-pc", "https://www.wikipedia.org/", pinned) == "000"
     wait_for(lambda: fetch_code("kid-pc", "https://www.wikipedia.org/", pinned) in ("200", "301", "302"), 15,
              what="passthrough after a refused certificate")

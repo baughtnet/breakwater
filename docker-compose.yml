@@ -1,0 +1,52 @@
+# Breakwater, one node. Every service uses the host's network: this machine becomes the filter,
+# the DHCP server and the gateway for the devices you route through it.
+#
+#   ./deploy/setup-node.sh      first-time setup on a fresh machine (writes .env)
+#   docker compose up -d --build
+name: breakwater
+
+x-common: &common
+  restart: unless-stopped
+  network_mode: host
+  env_file: .env
+
+services:
+  init:
+    build: {context: ., dockerfile: core/Dockerfile}
+    user: root
+    env_file: .env
+    command: python -m breakwater.bootstrap /adguard/strict /adguard/basic
+    volumes:
+      - ./data/adguard-strict/conf:/adguard/strict
+      - ./data/adguard-basic/conf:/adguard/basic
+
+  adguard-strict:
+    <<: *common
+    image: adguard/adguardhome:v0.107.80
+    volumes:
+      - ./data/adguard-strict/conf:/opt/adguardhome/conf
+      - ./data/adguard-strict/work:/opt/adguardhome/work
+    depends_on: {init: {condition: service_completed_successfully}}
+
+  adguard-basic:
+    <<: *common
+    image: adguard/adguardhome:v0.107.80
+    volumes:
+      - ./data/adguard-basic/conf:/opt/adguardhome/conf
+      - ./data/adguard-basic/work:/opt/adguardhome/work
+    depends_on: {init: {condition: service_completed_successfully}}
+
+  core:
+    <<: *common
+    build: {context: ., dockerfile: core/Dockerfile}
+    volumes:
+      - ./data/core:/data
+      - ./data/ca:/ca:ro
+
+  gateway:
+    <<: *common
+    build: ./gateway
+    cap_add: [NET_ADMIN, NET_RAW, NET_BROADCAST]
+    volumes:
+      - ./data/ca:/ca
+      - ./data/gateway:/data
